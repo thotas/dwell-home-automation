@@ -3,7 +3,7 @@ import SwiftUI
 
 @main
 struct DwellDesktopApp: App {
-    @StateObject private var appState = AppState.preview()
+    @StateObject private var appState = AppState()
 
     var body: some SwiftUI.Scene {
         WindowGroup {

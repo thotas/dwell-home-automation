@@ -10,9 +10,11 @@ public final class AppState: ObservableObject {
     @Published public private(set) var rules: [AutomationRule] = []
     @Published public private(set) var schedules: [Schedule] = []
     @Published public private(set) var executionLogs: [ExecutionLog] = []
+    @Published public private(set) var providerCredentials: [Provider: ProviderCredentials] = [:]
 
     private let registry: ProviderRegistry
     private let controlService: DeviceControlService
+    private let credentialsStore: CredentialsStore?
 
     private lazy var automationEngine: AutomationEngine = {
         AutomationEngine(controlService: controlService) { [weak self] log in
@@ -20,22 +22,60 @@ public final class AppState: ObservableObject {
         }
     }()
 
-    public init(registry: ProviderRegistry = .mockDefault()) {
+    public init(
+        registry: ProviderRegistry = .liveDefault(),
+        credentialsStore: CredentialsStore? = try? CredentialsStore.defaultStore()
+    ) {
         self.registry = registry
         self.controlService = DeviceControlService(registry: registry)
+        self.credentialsStore = credentialsStore
+        self.providerCredentials = credentialsStore?.loadAll() ?? [:]
 
         for provider in registry.availableProviders {
             connectionStatus[provider] = .disconnected
+            if providerCredentials[provider] == nil {
+                providerCredentials[provider] = ProviderCredentials()
+            }
         }
     }
 
     public static func preview() -> AppState {
-        AppState(registry: .mockDefault())
+        AppState(registry: .mockDefault(), credentialsStore: nil)
+    }
+
+    public func credentials(for provider: Provider) -> ProviderCredentials {
+        providerCredentials[provider] ?? ProviderCredentials()
+    }
+
+    public func updateCredentials(provider: Provider, credentials: ProviderCredentials) {
+        providerCredentials[provider] = credentials
+        persistCredentials()
+        appendLog(source: provider.displayName, status: .success, message: "Credentials saved.")
+    }
+
+    public func requiredCredentialFields(for provider: Provider) -> [CredentialFieldDefinition] {
+        guard let adapter = try? registry.adapter(for: provider) else {
+            return []
+        }
+
+        return (adapter as? CredentialAwareProviderAdapter)?.requiredCredentialFields ?? []
+    }
+
+    public func connectionHelpText(for provider: Provider) -> String {
+        guard let adapter = try? registry.adapter(for: provider) else {
+            return ""
+        }
+
+        return (adapter as? CredentialAwareProviderAdapter)?.connectionHelpText ?? ""
     }
 
     public func connect(provider: Provider) throws {
         connectionStatus[provider] = .connecting
         let adapter = try registry.adapter(for: provider)
+
+        if let credentialAware = adapter as? CredentialAwareProviderAdapter {
+            credentialAware.updateCredentials(credentials(for: provider))
+        }
 
         do {
             try adapter.connect()
@@ -96,8 +136,8 @@ public final class AppState: ObservableObject {
     }
 
     public func addRingToGoveeTemplateRule() {
-        let ringMotion = devices.first { $0.id == "ring.motion.front" } ?? devices.first { $0.provider == .ring && $0.supports(.motion) }
-        let goveeSwitch = devices.first { $0.id == "govee.switch.porch" } ?? devices.first { $0.provider == .govee && $0.supports(.switchPower) }
+        let ringMotion = devices.first { $0.provider == .ring && $0.supports(.motion) }
+        let goveeSwitch = devices.first { $0.provider == .govee && $0.supports(.switchPower) }
 
         guard let triggerDevice = ringMotion, let actionDevice = goveeSwitch else {
             appendLog(source: "Rules", status: .failed, message: "Connect Ring and Govee devices before adding template rule.")
@@ -109,9 +149,10 @@ public final class AppState: ObservableObject {
         appendLog(source: "Rules", status: .success, message: "Template rule added.")
     }
 
-    public func simulateMotionEvent(deviceID: String = "ring.motion.front") {
+    public func simulateMotionEvent(deviceID: String = "") {
         automationEngine.replaceRules(rules)
-        automationEngine.process(event: .motionDetected(deviceID: deviceID), availableDevices: devices)
+        let targetDeviceID = deviceID.isEmpty ? (devices.first { $0.provider == .ring && $0.supports(.motion) }?.id ?? "ring.motion.front") : deviceID
+        automationEngine.process(event: .motionDetected(deviceID: targetDeviceID), availableDevices: devices)
         refreshAllConnectedDevices()
     }
 
@@ -132,7 +173,7 @@ public final class AppState: ObservableObject {
     public func createDefaultSceneIfNeeded() {
         guard scenes.isEmpty else { return }
 
-        if let govee = devices.first(where: { $0.id == "govee.switch.porch" }) {
+        if let govee = devices.first(where: { $0.provider == .govee && $0.supports(.switchPower) }) {
             createScene(
                 name: "Porch On",
                 actions: [SceneAction(deviceID: govee.id, command: .switchOn)]
@@ -185,9 +226,20 @@ public final class AppState: ObservableObject {
         for provider in Provider.allCases {
             guard connectionStatus[provider] == .connected else { continue }
             guard let adapter = try? registry.adapter(for: provider) else { continue }
+            if let credentialAware = adapter as? CredentialAwareProviderAdapter {
+                credentialAware.updateCredentials(credentials(for: provider))
+            }
             if let discovered = try? adapter.discoverDevices() {
                 mergeDevices(discovered)
             }
+        }
+    }
+
+    private func persistCredentials() {
+        do {
+            try credentialsStore?.saveAll(providerCredentials)
+        } catch {
+            appendLog(source: "Credentials", status: .failed, message: "Failed to save credentials: \(error.localizedDescription)")
         }
     }
 }

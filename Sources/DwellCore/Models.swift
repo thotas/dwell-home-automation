@@ -60,6 +60,7 @@ public struct DeviceState: Codable, Equatable, Sendable {
     public var isOn: Bool
     public var brightness: Double?
     public var motionDetected: Bool
+    public var temperature: Double?
     public var armed: Bool
     public var locked: Bool
 
@@ -67,12 +68,14 @@ public struct DeviceState: Codable, Equatable, Sendable {
         isOn: Bool = false,
         brightness: Double? = nil,
         motionDetected: Bool = false,
+        temperature: Double? = nil,
         armed: Bool = false,
         locked: Bool = false
     ) {
         self.isOn = isOn
         self.brightness = brightness
         self.motionDetected = motionDetected
+        self.temperature = temperature
         self.armed = armed
         self.locked = locked
     }
