@@ -19,7 +19,10 @@ let package = Package(
         .executableTarget(
             name: "DwellApp",
             dependencies: ["DwellCore"],
-            path: "Sources/DwellApp"
+            path: "Sources/DwellApp",
+            resources: [
+                .process("Assets.xcassets")
+            ]
         ),
         .testTarget(
             name: "DwellCoreTests",

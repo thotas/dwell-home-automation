@@ -38,7 +38,7 @@ public final class RuleStore {
     }
 
     public func load() throws -> [AutomationRule] {
-        guard FileManager.default.fileExists(atPath: fileURL.path()) else {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
             return []
         }
 
